@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>2D シャドウキャスティング — 松明とフォグ・オブ・ウォー</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0b0c12; color: #cfd3e0; font: 14px/1.5 system-ui, sans-serif;
+         display: flex; gap: 24px; padding: 24px; align-items: flex-start; flex-wrap: wrap; }
+  canvas { image-rendering: pixelated; width: 1024px; max-width: 100%; aspect-ratio: 512 / 288;
+           background: #000; border: 1px solid #222634; cursor: crosshair; display: block; }
+  aside { width: 260px; }
+  h1 { font-size: 16px; margin: 0 0 12px; color: #f0d9b5; }
+  label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  input[type=range] { flex: 1; }
+  button { background: #1c2030; color: inherit; border: 1px solid #333a50; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #262b40; }
+  .hint { color: #8a90a6; font-size: 12px; margin-top: 14px; }
+  #stats { font-family: ui-monospace, monospace; font-size: 12px; color: #9fb4d0; margin-top: 12px; white-space: pre; }
+  kbd { background: #1c2030; border: 1px solid #333a50; border-radius: 3px; padding: 0 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+  <canvas id="view" width="512" height="288"></canvas>
+  <aside>
+    <h1>シャドウキャスティング</h1>
+    <label>光の半径 <input id="radius" type="range" min="24" max="160" value="92"> <span id="radiusVal">92</span></label>
+    <label><input id="banding" type="checkbox" checked> 6段階に量子化（バンディング）</label>
+    <label><input id="dilate" type="checkbox" checked> 壁の上面を照らす（5px 膨張）</label>
+    <label><input id="fog" type="checkbox" checked> フォグ・オブ・ウォー</label>
+    <label><input id="flicker" type="checkbox" checked> 松明の揺らぎ</label>
+    <label><input id="tileMode" type="checkbox"> タイル単位でキャスト（比較用）</label>
+    <label><input id="enemySight" type="checkbox"> 敵の視界を表示</label>
+    <p><button id="resetFog">探索済みをリセット</button> <button id="clearLights">設置した光を消す</button></p>
+    <div id="stats"></div>
+    <p class="hint">
+      <kbd>WASD</kbd> / 矢印キーで移動<br>
+      クリックで青い灯火を設置／撤去<br>
+      敵は視線が通ると赤くなります（片方向の視線判定）
+    </p>
+  </aside>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
