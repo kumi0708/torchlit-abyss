@@ -1,8 +1,8 @@
-# 2D Shadowcasting — 松明とフォグ・オブ・ウォー
+# Torchlit Abyss — 2D Shadowcasting（松明とフォグ・オブ・ウォー）
 
 SpriteCook の記事 [2D Shadowcasting for Torchlight and Fog of War](https://www.spritecook.ai/blog/2d-shadowcasting-torchlight-fog-of-war) の手法を、ブラウザ上で**素の JavaScript** （依存なし）で実装したデモです。
 
-**▶ デモ: https://kumi0708.github.io/shadowcasting/**
+**▶ デモ: https://kumi0708.github.io/torchlit-abyss/**
 
 グリッド上で「光源から見えるセル」を求める**再帰的シャドウキャスティング**を使い、その結果ひとつから次の 3 つを作ります。
 
