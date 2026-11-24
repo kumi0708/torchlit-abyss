@@ -1,7 +1,7 @@
 import { shadowcast, lightWallDepth } from './shadowcast.js';
+import { TILE, SPRITES, ALERT, buildLevel, stamp, dropShadow, drawFlame } from './art.js';
 
 // ---------- マップ ----------
-const TILE = 16;
 const MAP = [
   '################################',
   '#......#..........#............#',
@@ -36,66 +36,13 @@ for (let ty = 0; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) {
   for (let y = 0; y < TILE; y++) walls.fill(1, (ty * TILE + y) * W + tx * TILE, (ty * TILE + y) * W + tx * TILE + TILE);
 }
 
-// ---------- 背景（ピクセルアートを手続き生成） ----------
-let seed = 1337;
-const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-const bg = (() => {
-  const c = new OffscreenCanvas(W, H), g = c.getContext('2d');
-  for (let ty = 0; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) {
-    const x0 = tx * TILE, y0 = ty * TILE;
-    if (!isWallTile(tx, ty)) {
-      const v = 52 + rand() * 14 | 0;
-      g.fillStyle = `rgb(${v + 6},${v},${v - 6})`; g.fillRect(x0, y0, TILE, TILE);
-      g.fillStyle = `rgb(${v - 14},${v - 18},${v - 22})`;           // 石畳の目地
-      g.fillRect(x0, y0 + 15, TILE, 1); g.fillRect(x0 + 15, y0, 1, TILE);
-      g.fillRect(x0 + ((ty & 1) ? 7 : 3), y0 + 7, 1, 8); g.fillRect(x0, y0 + 7, TILE, 1);
-      for (let k = 0; k < 6; k++) {                                   // 小石・ひび
-        const d = rand() < 0.5 ? -16 : 12;
-        g.fillStyle = `rgb(${v + d + 6},${v + d},${v + d - 6})`;
-        g.fillRect(x0 + (rand() * 15 | 0), y0 + (rand() * 15 | 0), 1, 1);
-      }
-      if (rand() < 0.06) { g.fillStyle = '#4c5a34'; g.fillRect(x0 + 4, y0 + 10, 3, 2); g.fillRect(x0 + 5, y0 + 9, 1, 1); }
-    } else {
-      const front = !isWallTile(tx, ty + 1);                          // 下が床なら手前の壁面を描く
-      g.fillStyle = '#5f6378'; g.fillRect(x0, y0, TILE, TILE);
-      g.fillStyle = '#6c7088';
-      for (let k = 0; k < 5; k++) g.fillRect(x0 + (rand() * 14 | 0), y0 + (rand() * 10 | 0), 2, 1);
-      if (isWallTile(tx, ty - 1) === false) { g.fillStyle = '#7a7e96'; g.fillRect(x0, y0, TILE, 1); }
-      if (front) {
-        g.fillStyle = '#34374a'; g.fillRect(x0, y0 + 9, TILE, 7);
-        g.fillStyle = '#272a39';
-        g.fillRect(x0, y0 + 9, TILE, 1); g.fillRect(x0, y0 + 12, TILE, 1);
-        for (let bx = (tx & 1) * 4; bx < TILE; bx += 8) g.fillRect(x0 + bx, y0 + 9, 1, 3);
-        for (let bx = 4 - (tx & 1) * 4; bx < TILE; bx += 8) g.fillRect(x0 + bx, y0 + 12, 1, 4);
-      }
-    }
-  }
-  return g.getImageData(0, 0, W, H).data;
-})();
-
-// ---------- スプライト ----------
-const PAL = { h: [60, 38, 26], s: [232, 186, 150], b: [70, 110, 200], d: [40, 60, 120], f: [255, 150, 40], F: [255, 230, 120],
-  g: [120, 70, 150], G: [90, 50, 115], r: [210, 50, 50], R: [150, 30, 30], e: [240, 240, 240], p: [20, 10, 20],
-  o: [90, 80, 70], m: [130, 120, 110], c: [120, 200, 255], C: [220, 250, 255] };
-const SPRITES = {
-  player: ['..hhh..', '.hsssh.', '..sss.F', '.bbbbbf', 'd.bbb.m', '..b.b..', '..d.d..'],
-  enemy: ['..ggg..', '.ggggg.', 'gepgepg', 'ggggggg', 'GgGgGgG', 'G.G.G.G'],
-  brazier: ['.C.C.', '.cCc.', 'ommmo', '.mmm.', '.m.m.'],
-};
-function stamp(buf, name, cx, cy, recolor) {
-  const rows = SPRITES[name], x0 = Math.round(cx) - (rows[0].length >> 1), y0 = Math.round(cy) - (rows.length >> 1);
-  rows.forEach((row, dy) => [...row].forEach((ch, dx) => {
-    if (ch === '.') return;
-    const x = x0 + dx, y = y0 + dy;
-    if (x < 0 || y < 0 || x >= W || y >= H) return;
-    const col = PAL[(recolor && recolor[ch]) || ch], i = (y * W + x) * 4;
-    buf[i] = col[0]; buf[i + 1] = col[1]; buf[i + 2] = col[2];
-  }));
-}
+// 背景（床・壁・飾り）と壁松明の位置は art.js でコード生成する
+const { bg, sconces } = buildLevel(MAP, W, H, 1337);
 
 // ---------- 光源 ----------
 const AMBIENT = [0.045, 0.05, 0.09];
 const TORCH = [1.0 * 1.15, 0.80 * 1.15, 0.55 * 1.15];
+const SCONCE = [1.0 * 0.8, 0.68 * 0.8, 0.40 * 0.8];
 const MAGIC = [0.45, 0.75, 1.1];
 const FOG_TINT = [0.30, 0.32, 0.40];
 
@@ -103,7 +50,7 @@ const $ = (id) => document.getElementById(id);
 const opt = () => ({ banding: $('banding').checked, dilate: $('dilate').checked, tileMode: $('tileMode').checked });
 
 function makeLight(x, y, radius, color, phase) {
-  return { x, y, radius, color, phase, key: '', seen: new Uint8Array(N), band: new Float32Array(N) };
+  return { x, y, radius, color, phase, key: '', seen: new Uint8Array(N), band: new Float32Array(N), box: [0, 0, -1, -1] };
 }
 
 const tileSeen = new Uint8Array(TW * TH);
@@ -122,17 +69,18 @@ function castFrom(x, y, radius, out, o) {
   return out;
 }
 
-let lastCastMs = 0;
+// 再計算したら所要時間（ms）を、キャッシュが効いたら -1 を返す
 function updateLight(L, o) {
   const x = Math.round(L.x), y = Math.round(L.y);
   const key = `${x},${y},${L.radius},${o.banding},${o.dilate},${o.tileMode}`;
-  if (key === L.key) return false;                // 記事の推奨: 光が別セルに移ったときだけ再計算
+  if (key === L.key) return -1;                   // 記事の推奨: 光が別セルに移ったときだけ再計算
   L.key = key;
   const t0 = performance.now();
   castFrom(x, y, L.radius, L.seen, o);
   L.band.fill(0);
   const R = L.radius, x0 = Math.max(0, x - R - 6), x1 = Math.min(W - 1, x + R + 6);
   const y0 = Math.max(0, y - R - 6), y1 = Math.min(H - 1, y + R + 6);
+  L.box = [x0, y0, x1, y1];
   for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
     const i = py * W + px;
     if (!L.seen[i]) continue;
@@ -140,15 +88,16 @@ function updateLight(L, o) {
     if (o.banding) t = Math.ceil(t * 6) / 6;        // 6 段階のフラットな帯
     L.band[i] = t;
   }
-  lastCastMs = performance.now() - t0;
-  return true;
+  return performance.now() - t0;
 }
 
 // ---------- ゲーム状態 ----------
-const player = { x: 3 * TILE + 8, y: 2 * TILE + 8 };
+const player = { x: 3 * TILE + 8, y: 2 * TILE + 8, facing: 1, moving: false, walkT: 0 };
 const torch = makeLight(player.x, player.y, 92, TORCH, 0);
+const wallTorches = sconces.map((s, k) => makeLight(s.lightX, s.lightY, 60, SCONCE, 1 + k * 2.3));
 const braziers = [];
 const explored = new Uint8Array(N);
+window.demo = { player, explored, sconces };              // デバッグ用（コンソールから位置を動かせる）
 
 const ENEMY_RANGE = 72;
 const enemies = [
@@ -159,8 +108,18 @@ const enemies = [
     const px = Math.round(a.x + (b.x - a.x) * s), py = Math.round(a.y + (b.y - a.y) * s);
     if (walls[py * W + px]) console.warn(`enemy ${k} patrol crosses a wall at`, px, py);
   }
-  return { a, b, s: k * 0.3, dir: 1, speed: 26 + k * 6, x: a.x, y: a.y, sees: false, sight: new Uint8Array(N) };
+  return { a, b, s: k * 0.3, dir: 1, speed: 26 + k * 6, x: a.x, y: a.y, phase: k * 1.7, sees: false, sight: new Uint8Array(N) };
 });
+
+// 火の粉
+const embers = [];
+function spawnEmbers(x, y, dt, rate) {
+  if (Math.random() < rate * dt) {
+    const life = 0.5 + Math.random() * 0.8;
+    // 見えている炎から出た火の粉なので、壁の上など視界の外へ舞い上がっても描く
+    embers.push({ x: x + (Math.random() - 0.5) * 2, y: y - 3, vx: (Math.random() - 0.5) * 8, vy: -(12 + Math.random() * 14), life, max: life, fromVisible: true });
+  }
+}
 
 const keys = new Set();
 addEventListener('keydown', (e) => { keys.add(e.key.toLowerCase()); if (e.key.startsWith('Arrow')) e.preventDefault(); });
@@ -189,11 +148,14 @@ $('clearLights').addEventListener('click', () => (braziers.length = 0));
 const frame = new Uint8ClampedArray(N * 4);
 const out = ctx.createImageData(W, H);
 const sightMask = new Uint8Array(N);
-let prev = performance.now(), fps = 60, enemyMs = 0, composeMs = 0;
+const accR = new Float32Array(N), accG = new Float32Array(N), accB = new Float32Array(N);
+const emissive = [];
+let prev = performance.now(), fps = 60, enemyMs = 0, composeMs = 0, lastCastMs = 0;
 
 function tick(now) {
   const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
   fps += (1 / Math.max(dt, 1e-3) - fps) * 0.05;
+  const t = now / 1000;
   const o = opt();
 
   // 移動
@@ -203,12 +165,18 @@ function tick(now) {
   if (keys.has('w') || keys.has('arrowup')) my--;
   if (keys.has('s') || keys.has('arrowdown')) my++;
   const len = Math.hypot(mx, my) || 1, sp = 72 * dt;
+  const ox = player.x, oy = player.y;
   if (!blocked(player.x + mx / len * sp, player.y)) player.x += mx / len * sp;
   if (!blocked(player.x, player.y + my / len * sp)) player.y += my / len * sp;
+  player.moving = player.x !== ox || player.y !== oy;
+  if (mx) player.facing = Math.sign(mx);
+  player.walkT = player.moving ? player.walkT + dt : 0;
 
   // 光とフォグ
   torch.x = player.x; torch.y = player.y;
-  if (updateLight(torch, o)) for (let i = 0; i < N; i++) explored[i] |= torch.seen[i];
+  const ms = updateLight(torch, o);
+  if (ms >= 0) { lastCastMs = ms; for (let i = 0; i < N; i++) explored[i] |= torch.seen[i]; }
+  for (const L of wallTorches) updateLight(L, o);
   for (const b of braziers) updateLight(b, o);
   const vis = torch.seen;                          // プレイヤーの視界 = 松明の届く範囲
 
@@ -230,27 +198,61 @@ function tick(now) {
 
   // スプライトを描いたフレーム（フォグ部分は背景のみを使うので敵の記憶は残らない）
   frame.set(bg);
-  for (const b of braziers) stamp(frame, 'brazier', b.x, b.y);
-  for (const e of enemies) stamp(frame, 'enemy', e.x, e.y, e.sees ? { g: 'r', G: 'R' } : null);
-  stamp(frame, 'player', player.x, player.y);
+  emissive.length = 0;
+  // 壁松明の炎は壁の中にあり膨張処理でも届かないことがあるので、真下の床（光源の位置）が見えていれば描く
+  const flames = wallTorches
+    .map((L, k) => ({ x: sconces[k].flameX, y: sconces[k].flameY, phase: L.phase, shown: vis[sconces[k].lightY * W + sconces[k].lightX] === 1 }))
+    .filter((f) => f.shown);
+  for (const b of braziers) {
+    const bx = Math.round(b.x), by = Math.round(b.y);
+    dropShadow(frame, W, H, bx, by + 4, 3, 1.2);
+    const bob = Math.round(Math.sin(t * 2.5 + b.phase));
+    stamp(frame, W, H, SPRITES.lamp.slice(0, 5), bx - 3, by - 4 + bob, { emissive });
+    stamp(frame, W, H, SPRITES.lamp.slice(5), bx - 3, by + 1);
+  }
+  const ordered = [...enemies.map((e) => ({ kind: 'enemy', e, y: e.y })), { kind: 'player', y: player.y }].sort((a, b) => a.y - b.y);
+  for (const s of ordered) {
+    if (s.kind === 'enemy') {
+      const e = s.e, ex = Math.round(e.x), ey = Math.round(e.y);
+      const rows = Math.floor(t * 3 + e.phase) % 2 ? SPRITES.slimeSquash : SPRITES.slimeTall;
+      dropShadow(frame, W, H, ex, ey + 4, 5, 1.5);
+      stamp(frame, W, H, rows, ex - 5, ey + 4 - rows.length, { recolor: e.sees ? ALERT : null });
+      if (e.sees) {                                  // 頭上の「!」（発光）
+        const top = ey + 4 - rows.length - 2;
+        for (const dy of [-5, -4, -3, -1]) emissive.push((top + dy) * W + ex, 255, 220, 80);
+      }
+    } else {
+      const px = Math.round(player.x), py = Math.round(player.y);
+      const walking = player.moving && Math.floor(player.walkT * 8) % 2 === 1;
+      const rows = walking ? SPRITES.playerWalk : SPRITES.playerIdle;
+      dropShadow(frame, W, H, px, py + 5, 4, 1.5);
+      stamp(frame, W, H, rows, px - 4, py + 5 - rows.length, { flip: player.facing < 0 });
+      const hx = px + (player.facing > 0 ? 4 : -5), hy = py - 1;
+      for (let k = 0; k < 3; k++) { const p = ((hy - k) * W + hx) * 4; frame[p] = 112; frame[p + 1] = 72; frame[p + 2] = 40; }
+      flames.push({ x: hx, y: hy - 3, phase: 0 });
+    }
+  }
 
-  // 合成: lit = scene * (ambient + Σ light * color)
-  const tc = performance.now(), t = now / 1000;
-  const lights = [torch, ...braziers].map((L) => {
+  // 光の合計: ambient + Σ light × color × flicker（各光源は届く範囲の矩形だけ足す）
+  const tc = performance.now();
+  accR.fill(AMBIENT[0]); accG.fill(AMBIENT[1]); accB.fill(AMBIENT[2]);
+  for (const L of [torch, ...wallTorches, ...braziers]) {
     const f = $('flicker').checked
-      ? 1 + 0.06 * Math.sin(t * 11 + L.phase) + 0.04 * Math.sin(t * 23.3 + L.phase * 2) + 0.03 * Math.sin(t * 37.1)
+      ? 1 + 0.06 * Math.sin(t * 11 + L.phase) + 0.04 * Math.sin(t * 23.3 + L.phase * 2) + 0.03 * Math.sin(t * 37.1 + L.phase)
       : 1;
-    return { band: L.band, r: L.color[0] * f, g: L.color[1] * f, b: L.color[2] * f };
-  });
+    const cr = L.color[0] * f, cg = L.color[1] * f, cb = L.color[2] * f, band = L.band;
+    const [x0, y0, x1, y1] = L.box;
+    for (let py = y0; py <= y1; py++) for (let i = py * W + x0, end = py * W + x1; i <= end; i++) {
+      const v = band[i];
+      if (v) { accR[i] += v * cr; accG[i] += v * cg; accB[i] += v * cb; }
+    }
+  }
+
+  // 合成: lit = scene × 光の合計
   const d = out.data, fog = $('fog').checked;
   for (let i = 0, p = 0; i < N; i++, p += 4) {
     if (vis[i]) {
-      let lr = AMBIENT[0], lg = AMBIENT[1], lb = AMBIENT[2];
-      for (let k = 0; k < lights.length; k++) {
-        const v = lights[k].band[i];
-        if (v) { lr += v * lights[k].r; lg += v * lights[k].g; lb += v * lights[k].b; }
-      }
-      d[p] = frame[p] * lr; d[p + 1] = frame[p + 1] * lg; d[p + 2] = frame[p + 2] * lb;
+      d[p] = frame[p] * accR[i]; d[p + 1] = frame[p + 1] * accG[i]; d[p + 2] = frame[p + 2] * accB[i];
       if (showSight && sightMask[i]) { d[p] += 60; d[p + 1] *= 0.7; d[p + 2] *= 0.7; }
     } else if (fog && explored[i]) {
       const m = (bg[p] + bg[p + 1] + bg[p + 2]) / 3;   // 探索済み・視界外は灰青のモノクロ
@@ -259,6 +261,28 @@ function tick(now) {
       d[p] = d[p + 1] = d[p + 2] = 0;
     }
     d[p + 3] = 255;
+  }
+
+  // 発光するもの（結晶・「!」・炎・火の粉）は、ライティングの後に明るさそのままで描く
+  for (let k = 0; k < emissive.length; k += 4) {
+    const i = emissive[k];
+    if (i < 0 || i >= N || !vis[i]) continue;
+    d[i * 4] = emissive[k + 1]; d[i * 4 + 1] = emissive[k + 2]; d[i * 4 + 2] = emissive[k + 3];
+  }
+  for (const fl of flames) {
+    drawFlame(d, null, W, H, fl.x, fl.y, t, fl.phase);
+    spawnEmbers(fl.x, fl.y, dt, 2.5);
+  }
+  for (let k = embers.length - 1; k >= 0; k--) {
+    const e = embers[k];
+    e.life -= dt;
+    if (e.life <= 0) { embers.splice(k, 1); continue; }
+    e.vx += (Math.random() - 0.5) * 30 * dt;
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    const x = Math.round(e.x), y = Math.round(e.y), i = y * W + x;
+    if (x < 0 || y < 0 || x >= W || y >= H || (!vis[i] && !e.fromVisible)) continue;
+    const a = e.life / e.max, p = i * 4;
+    d[p] += 255 * a; d[p + 1] += (90 + 140 * a) * a; d[p + 2] += 30 * a;
   }
   ctx.putImageData(out, 0, 0);
   composeMs = performance.now() - tc;
@@ -270,6 +294,7 @@ function tick(now) {
     `松明キャスト    ${lastCastMs.toFixed(2)} ms\n` +
     `敵の視線 x${enemies.length}    ${enemyMs.toFixed(2)} ms\n` +
     `合成            ${composeMs.toFixed(2)} ms\n` +
+    `光源            ${1 + wallTorches.length + braziers.length} 個\n` +
     `探索率          ${(ex / (N / 7) * 100).toFixed(1)} %\n` +
     `発見された      ${spotted ? `⚠ ${spotted} 体` : '—'}`;
   requestAnimationFrame(tick);
