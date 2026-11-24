@@ -2,6 +2,8 @@
 
 [2D Shadowcasting for Torchlight and Fog of War](https://www.spritecook.ai/blog/2d-shadowcasting-torchlight-fog-of-war) の手法をブラウザ（素の JavaScript、依存なし）で実装したデモです。
 
+**▶ デモ: https://kumi0708.github.io/shadowcasting/**
+
 ## 動かし方
 
 ```bash
