@@ -1,5 +1,7 @@
 # Torchlit Abyss — 2D Shadowcasting（松明とフォグ・オブ・ウォー）
 
+**日本語** | [English](README.en.md)
+
 SpriteCook の記事 [2D Shadowcasting for Torchlight and Fog of War](https://www.spritecook.ai/blog/2d-shadowcasting-torchlight-fog-of-war) の手法を、ブラウザ上で**素の JavaScript** （依存なし）で実装したデモです。
 
 **▶ デモ: https://kumi0708.github.io/torchlit-abyss/**
@@ -433,7 +435,9 @@ npm test
 │   └── main.js              マップ・光・フォグ・敵・描画ループ
 ├── test/
 │   └── shadowcast.test.mjs  記事の期待値によるテスト
-└── serve.mjs                依存なしの静的ファイルサーバー
+├── serve.mjs                依存なしの静的ファイルサーバー
+├── README.md                説明（日本語）
+└── README.en.md             説明（英語）
 ```
 
 ES Modules を使っているので、`file://` ではなく HTTP サーバー経由で開きます。
