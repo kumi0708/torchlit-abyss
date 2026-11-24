@@ -54,22 +54,46 @@ export function shadowcast(walls, w, h, cx, cy, radius, out) {
 
 // scipy.ndimage.binary_dilation(seen, iterations=n) 相当（十字の構造要素 = マンハッタン距離 n）を
 // 求め、壁ピクセルだけ seen に足す。壁の上面が「最初の1ピクセルだけ明るい」問題への対処。
+//
+// 膨張が届くのは見えている領域から距離 n 以内だけなので、見えている領域の外接矩形を
+// n だけ広げた範囲だけを処理する（盤面全体を n 回なめるより大幅に速い）。
 export function lightWallDepth(seen, walls, w, h, n) {
-  let cur = seen.slice();
-  let next = new Uint8Array(w * h);
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let first = -1, last = -1;
+    for (let x = 0; x < w; x++) if (seen[row + x]) { if (first < 0) first = x; last = x; }
+    if (first < 0) continue;
+    if (first < x0) x0 = first;
+    if (last > x1) x1 = last;
+    if (y < y0) y0 = y;
+    y1 = y;
+  }
+  if (x1 < 0 || n <= 0) return seen;
+  x0 = Math.max(0, x0 - n); y0 = Math.max(0, y0 - n);
+  x1 = Math.min(w - 1, x1 + n); y1 = Math.min(h - 1, y1 + n);
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+
+  // 矩形の外には見えている画素がないので、矩形の外側は「見えていない」として扱ってよい
+  let cur = new Uint8Array(bw * bh);
+  let next = new Uint8Array(bw * bh);
+  for (let y = 0; y < bh; y++) cur.set(seen.subarray((y0 + y) * w + x0, (y0 + y) * w + x0 + bw), y * bw);
   for (let it = 0; it < n; it++) {
     next.set(cur);
-    for (let y = 0; y < h; y++) {
-      const row = y * w;
-      for (let x = 0; x < w; x++) {
+    for (let y = 0; y < bh; y++) {
+      const row = y * bw;
+      for (let x = 0; x < bw; x++) {
         const i = row + x;
         if (cur[i]) continue;
-        if ((x > 0 && cur[i - 1]) || (x < w - 1 && cur[i + 1]) ||
-            (y > 0 && cur[i - w]) || (y < h - 1 && cur[i + w])) next[i] = 1;
+        if ((x > 0 && cur[i - 1]) || (x < bw - 1 && cur[i + 1]) ||
+            (y > 0 && cur[i - bw]) || (y < bh - 1 && cur[i + bw])) next[i] = 1;
       }
     }
     [cur, next] = [next, cur];
   }
-  for (let i = 0; i < seen.length; i++) if (cur[i] && walls[i]) seen[i] = 1;
+  for (let y = 0; y < bh; y++) {
+    const src = y * bw, dst = (y0 + y) * w + x0;
+    for (let x = 0; x < bw; x++) if (cur[src + x] && walls[dst + x]) seen[dst + x] = 1;
+  }
   return seen;
 }
