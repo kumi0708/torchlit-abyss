@@ -55,15 +55,15 @@ SpriteCook の記事 [2D Shadowcasting for Torchlight and Fog of War](https://ww
 
 ```mermaid
 flowchart LR
-  W[壁マスク<br/>walls] --> SC[シャドウキャスト]
-  P[光源の位置・半径] --> SC
-  SC --> S[可視マスク<br/>seen]
-  S --> D[壁ピクセルへ<br/>5px 膨張]
-  D --> E[探索済みマスク<br/>explored |= seen]
-  D --> L[減衰 t と<br/>6 段階量子化]
-  L --> C[合成<br/>scene × ambient + Σ light × color]
+  W["壁マスク<br/>walls"] --> SC["シャドウキャスト"]
+  P["光源の位置・半径"] --> SC
+  SC --> S["可視マスク<br/>seen"]
+  S --> D["壁ピクセルへ<br/>5px 膨張"]
+  D --> E["探索済みマスク<br/>explored ∪= seen"]
+  D --> L["減衰 t と<br/>6 段階量子化"]
+  L --> C["合成<br/>scene × (ambient + Σ light × color)"]
   E --> C
-  C --> O[画面]
+  C --> O["画面"]
 ```
 
 ポイントは、**可視判定の結果を「データ」として持つ**ことです。シェーダーで影を描くだけの方式と違い、同じ `seen` 配列を光・フォグ・ゲームロジック（敵の視線）のすべてに使い回せます。
