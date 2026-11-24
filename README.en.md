@@ -6,6 +6,10 @@ A browser demo that implements the technique from SpriteCook's article [2D Shado
 
 **▶ Demo: https://kumi0708.github.io/torchlit-abyss/**
 
+![Screenshot of Torchlit Abyss. The hero's torch in the center is blocked by walls, casting wedge-shaped shadows, and rooms already visited remain as blue-gray fog](docs/images/hero.png)
+
+<sub>Every figure in this README is generated from the same code as the demo (`src/`) by `npm run figures`.</sub>
+
 It uses **recursive shadowcasting** to find which grid cells are visible from a light source, and builds three things from that single result:
 
 - **Torchlight** that is blocked by walls
@@ -75,6 +79,20 @@ flowchart LR
   C --> O["Screen"]
 ```
 
+### Step by step
+
+The result of each stage at the same spot (the hero standing at the central crossroads, radius 92 px):
+
+| ① Wall mask `walls` | ② Shadowcast `seen` | ③ Dilate 5 px into walls |
+| --- | --- | --- |
+| ![Wall mask: walls in light gray, floor in navy](docs/images/step1-walls.png) | ![Shadowcast result: lit floor in ochre, shadow behind walls in navy](docs/images/step2-seen.png) | ![Wall pixels added by dilation shown in cyan](docs/images/step3-dilate.png) |
+| The white square is the light. Only walls (gray) block it | Ochre = visible floor, bright yellow = visible wall, navy = hidden | **Cyan** marks wall pixels added by dilation, giving wall tops depth |
+
+| ④ Falloff and 6-band quantization | ⑤ Final composite |
+| --- | --- |
+| ![Light intensity as 6 concentric bands](docs/images/step4-bands.png) | ![Final frame with lighting applied to the background](docs/images/step5-final.png) |
+| Light fades with distance in 6 bands | Background × (ambient + light), with emissive flames on top |
+
 The key point is that **visibility is kept as data**. Unlike approaches that only draw shadows in a shader, the same `seen` array drives the lighting, the fog and the game logic (enemy line of sight).
 
 ---
@@ -90,6 +108,10 @@ The algorithm scans outward from the light one row at a time. **When it hits a w
 . . . . # . . . .      the shadow widens with distance
 . . . . @ . . . .
 ```
+
+![Shadowcasting on a small grid. The white square at the bottom is the light, orange cells are lit walls, navy cells are shadow. Yellow lines through the walls' outer corners mark the shadow edges](docs/images/shadow-wedge.png)
+
+This is computed on a real grid. The white square is the light, orange cells are lit walls, and **navy cells are in shadow**. The yellow lines pass through each wall's outer corners; they are the edges of the shadow wedge (the ends of the slope interval).
 
 - The region still being scanned is an interval of **slopes**; walls split that interval.
 - Each cell is visited once, so the cost is roughly **proportional to the radius squared** (the lit area).
@@ -114,6 +136,10 @@ The full 360° is split into eight 45° octants, and **one octant's scanning log
      6  /   |   \  5
        /  7 | 4  \
 ```
+
+![Octant diagram: a radius-10 disc colored in 8 colors and numbered 0 to 7](docs/images/octants.png)
+
+A radius-10 area colored by which octant scans each cell. Cells on the axes and the 45° diagonals sit on the border between two octants.
 
 Local coordinates `(dx, dy)` inside an octant map to grid coordinates like this:
 
@@ -191,6 +217,10 @@ You can cast on any grid resolution. This demo treats **the whole 512×288 px ma
 | Look | Blocky light that spills over the drawn walls | Smooth shadows that follow the wall outlines |
 | Best for | Enemy AI checks, grid-based roguelike display | Visual lighting |
 
+| Cast per tile | Cast per pixel (this demo's default) |
+| --- | --- |
+| ![Per tile: the light follows tile squares and spills over wall tops](docs/images/tile-mode.png) | ![Per pixel: shadow edges extend smoothly from wall corners](docs/images/pixel-mode.png) |
+
 Turn on "Cast per tile" in the panel to see the per-tile result scaled up to pixels. The article also recommends **casting per pixel against the wall layer** for visual lighting. The difference is especially large with dual-grid tilesets, whose art is offset half a tile from the logic grid.
 
 ---
@@ -198,6 +228,11 @@ Turn on "Cast per tile" in the panel to see the per-tile result scaled up to pix
 ## Radial and cone lights
 
 ### Shadowless radial (for comparison)
+
+| Radial (with shadowcasting) | Cone (flashlight, down-left, 70°) | Shadowless radial |
+| --- | --- | --- |
+| ![Radial: shadows cast by walls](docs/images/mode-radial.png) | ![Cone: lights only the room to the lower left, plus a small circle around the hero](docs/images/mode-cone.png) | ![Shadowless: a plain circle of light that goes through walls](docs/images/mode-noshadow.png) |
+
 
 With "No shadows" on, there is no shadowcast at all: the light is a plain radial light that **lights every pixel inside the radius**. Falloff, quantization and compositing stay exactly the same.
 
@@ -226,6 +261,10 @@ A cone is made by **narrowing the shadowcast result by angle**, another payoff o
 Implementation: `lightWallDepth()`
 
 Shadowcasting only sees the first wall cell it hits. Per pixel, that means **only a 1-pixel rim of each wall top is lit and the rest stays pitch black**.
+
+| Without dilation | With dilation (5 px) |
+| --- | --- |
+| ![Without dilation: only a 1-pixel rim of the wall top is visible, the rest is black](docs/images/dilate-off.png) | ![With dilation: the wall top is lit 5 pixels deep and looks solid](docs/images/dilate-on.png) |
 
 So the visible area is **dilated by Manhattan distance 5**, and **only the wall pixels** of that dilation are marked visible.
 
@@ -259,6 +298,10 @@ light = ceil(t * 6) / 6        (only for visible pixels; 0 elsewhere)
 | … | … |
 | 5/6 < t ≤ 1 | 1 |
 
+| Smooth falloff | Quantized to 6 bands |
+| --- | --- |
+| ![Light as a smooth gradient](docs/images/falloff-smooth.png) | ![Light as 6 crisp bands](docs/images/falloff-bands.png) |
+
 ---
 
 ## Compositing the lighting
@@ -288,6 +331,10 @@ The article's Python/numpy version does this with array math; in Godot or Unity 
 
 Every pixel is in one of three states:
 
+![Fog of war: only the area around the hero is lit in color, visited rooms are blue-gray monochrome, unvisited areas are black](docs/images/hero.png)
+
+The hero has walked in from the top left. Only what is visible right now is in color; rooms already visited are blue-gray monochrome, and the unvisited right side is black.
+
 | State | Condition | Shown as |
 | --- | --- | --- |
 | Visible | `seen` | Lit with the formula above |
@@ -308,7 +355,15 @@ shadowcast(walls, W, H, enemyX, enemyY, 72, sight);
 const spotted = sight[playerY * W + playerX] === 1;
 ```
 
+![Enemy fields of view overlaid in red. The hero is inside the right enemy's view, so it has turned red with a "!" overhead](docs/images/enemy-sight.png)
+
+With "Show enemy sight" on. The hero is inside the right slime's field of view (red), so the slime turns red and shows a "!".
+
 Note that this algorithm is **not symmetric**: A seeing B does not guarantee B sees A. In the article's tests, about 16% of tile pairs on its map were one-way. If fairness matters in your game, use a symmetric variant such as **Albert Ford's Symmetric Shadowcasting**.
+
+![Two grids side by side. Left: A's view, where B is visible. Right: B's view, where A is not visible](docs/images/asymmetry.png)
+
+A real case found on a random grid. **Left**: the view from A (blue), where B (red) is visible. **Right**: the view from B, where A is not.
 
 ---
 
@@ -356,6 +411,10 @@ This demo also implements things the article does not cover:
 
 There is not a single image file. [src/art.js](src/art.js) writes the background and every character straight into an RGBA pixel array. The random seed is fixed, so the art is the same every time.
 
+| Background before lighting (`buildLevel()` output) | After lighting |
+| --- | --- |
+| ![Background before lighting: flagstones, rug, walls and bones at uniform brightness](docs/images/art-raw.png) | ![The same area lit by the hero's torch and a blue crystal lamp](docs/images/art-lit.png) |
+
 ### Floor
 
 1. Each 16×16 tile is split into one stone, two stacked stones, or four stones
@@ -388,11 +447,17 @@ Sprites are written as strings with 1 character = 1 pixel and converted to color
 | Slime | 10×8 / 10×7 | Alternates between a tall and a squashed shape to hop. Turns red with a "!" overhead when it spots you |
 | Magic crystal lamp | 7×9 | The crystal bobs up and down |
 
+![Sprite sheet at 8× scale: hero idle, walking and facing left; slime tall, squashed and alerted; crystal lamp; skull; bones](docs/images/sprites.png)
+
+From left: hero (idle, walking, facing left), slime (tall, squashed, alerted), crystal lamp, skull, bones.
+
 Every character casts an elliptical shadow at its feet, and characters are drawn in y order so they overlap correctly.
 
 ### Flames and embers
 
 - **Flames**: the shape is computed from time every frame. The height grows and shrinks between 2 and 6 px with sine waves of different periods, and sways more toward the tip. Colors go white → yellow → orange → red from the base up, with a faint orange glow around the base
+![Six flame frames at 8× scale; height and sway change every frame](docs/images/flames.png)
+
 - **Embers**: particles that pop out of flames at random. They rise, drift side to side, and fade from yellow to red over their lifetime. Their brightness is added on top
 
 ---
@@ -400,6 +465,12 @@ Every character casts an elliptical shadow at its feet, and characters are drawn
 ## Pitfalls
 
 - **A light inside a wall** only reaches its 8 neighbors. Move the light to the nearest floor cell before casting. This demo's wall torches draw their flame on the wall face but place the light on the floor right below. The flame pixels are too high for the dilation to reach, so whether to draw a flame is also decided by whether that floor cell is visible.
+
+  | Light placed at the flame (inside the wall) | Light placed on the floor below |
+  | --- | --- |
+  | ![Light inside the wall: almost nothing is lit](docs/images/sconce-in-wall.png) | ![Light on the floor: the whole room is lit](docs/images/sconce-on-floor.png) |
+
+  The cyan square marks where the light is placed.
 - When a **door** opens or closes, update `walls` and recast.
 - **Keep the cast grid aligned with the art**: if the drawn walls (tile art) and the occlusion grid are offset, light appears to pass through walls.
 
@@ -433,8 +504,14 @@ npm test
 ├── index.html               Page and control panel
 ├── src/
 │   ├── shadowcast.js        Shadowcasting and dilation (no DOM dependency)
+│   ├── lighting.js          Cast, cone, falloff, light accumulation, compositing (no DOM dependency)
+│   ├── world.js             Map and occlusion data
 │   ├── art.js               Procedural background, sprites and flames
-│   └── main.js              Map, lights, fog, enemies and the render loop
+│   └── main.js              Input, enemies, sprites and the render loop (browser only)
+├── tools/
+│   ├── figures.mjs          Generates the README figures (npm run figures)
+│   └── image.mjs            Dependency-free PNG writer
+├── docs/images/             Generated figures
 ├── test/
 │   └── shadowcast.test.mjs  Tests using the article's expected values
 ├── serve.mjs                Dependency-free static file server
@@ -448,7 +525,13 @@ The code uses ES modules, so open it through an HTTP server rather than `file://
 npm start
 ```
 
-Then open http://localhost:8173. `src/shadowcast.js` has no DOM dependency, so you can use it as-is in Node.js or other projects.
+Then open http://localhost:8173. `src/shadowcast.js` and `src/lighting.js` have no DOM dependency, so you can use them as-is in Node.js or other projects.
+
+To regenerate the README figures, run the command below. They are drawn with the same `src/` code as the demo, so changing the implementation changes the figures too.
+
+```bash
+npm run figures
+```
 
 ---
 

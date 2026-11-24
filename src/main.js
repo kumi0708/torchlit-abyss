@@ -1,137 +1,21 @@
-import { shadowcast, lightWallDepth } from './shadowcast.js';
-import { TILE, SPRITES, ALERT, buildLevel, stamp, dropShadow, drawFlame } from './art.js';
+import { shadowcast } from './shadowcast.js';
+import { SPRITES, ALERT, stamp, dropShadow, drawFlame } from './art.js';
+import { createWorld } from './world.js';
+import { TORCH, SCONCE, MAGIC, makeLight, updateLight, accumulateLights, composite } from './lighting.js';
 
-// ---------- マップ ----------
-const MAP = [
-  '################################',
-  '#......#..........#............#',
-  '#......#..........#....##......#',
-  '#..##.....####.........##......#',
-  '#......#..........#............#',
-  '#......#....##....######..######',
-  '####.###....##.........#.......#',
-  '#..........................#...#',
-  '#......##.......#####..........#',
-  '#......##.......#...#...####...#',
-  '#...............#...#...#......#',
-  '####..#####.....##.##...#..##..#',
-  '#.........#....................#',
-  '#..##.....#.........##.........#',
-  '#.........#.....#...##....#....#',
-  '#...............#..............#',
-  '#..........##.........#........#',
-  '################################',
-];
-const TW = MAP[0].length, TH = MAP.length;
-MAP.forEach((r, i) => { if (r.length !== TW) throw new Error(`MAP row ${i} has ${r.length} cols`); });
-const W = TW * TILE, H = TH * TILE, N = W * H;
-const isWallTile = (tx, ty) => tx < 0 || ty < 0 || tx >= TW || ty >= TH || MAP[ty][tx] === '#';
-
-// 遮蔽データ: タイル単位とピクセル単位の両方を持つ
-const tileWalls = new Uint8Array(TW * TH);
-const walls = new Uint8Array(N);
-for (let ty = 0; ty < TH; ty++) for (let tx = 0; tx < TW; tx++) {
-  if (!isWallTile(tx, ty)) continue;
-  tileWalls[ty * TW + tx] = 1;
-  for (let y = 0; y < TILE; y++) walls.fill(1, (ty * TILE + y) * W + tx * TILE, (ty * TILE + y) * W + tx * TILE + TILE);
-}
-
-// 背景（床・壁・飾り）と壁松明の位置は art.js でコード生成する
-const { bg, sconces } = buildLevel(MAP, W, H, 1337);
-
-// ---------- 光源 ----------
-const AMBIENT = [0.045, 0.05, 0.09];
-const TORCH = [1.0 * 1.15, 0.80 * 1.15, 0.55 * 1.15];
-const SCONCE = [1.0 * 0.8, 0.68 * 0.8, 0.40 * 0.8];
-const MAGIC = [0.45, 0.75, 1.1];
-const FOG_TINT = [0.30, 0.32, 0.40];
+// マップ・遮蔽データ・背景（world.js）と光の計算（lighting.js）は、図の生成スクリプトと共有している
+const world = createWorld();
+const { TILE, W, H, N, walls, bg, sconces } = world;
 
 const $ = (id) => document.getElementById(id);
 const opt = () => ({
   banding: $('banding').checked, dilate: $('dilate').checked, tileMode: $('tileMode').checked, noShadow: $('noShadow').checked,
 });
 
-// 扇形ライト: 中心から CONE_CORE px 以内は全方向を照らす（自分の足元が見えるように）。
-// 扇の縁は CONE_SOFT ラジアンかけてなめらかに暗くする。
-const CONE_CORE = 12, CONE_SOFT = 0.18;
-const angleDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
-
-function makeLight(x, y, radius, color, phase) {
-  return { x, y, radius, color, phase, key: '', seen: new Uint8Array(N), band: new Float32Array(N), box: [0, 0, -1, -1] };
-}
-
-const tileSeen = new Uint8Array(TW * TH);
-function castFrom(x, y, radius, out, o, cone) {
-  if (o.noShadow) {
-    // 比較用: 壁を無視して半径内をすべて照らす、ただの radial light
-    out.fill(0);
-    const r2 = radius * radius;
-    for (let py = Math.max(0, y - radius); py <= Math.min(H - 1, y + radius); py++) {
-      for (let px = Math.max(0, x - radius); px <= Math.min(W - 1, x + radius); px++) {
-        if ((px - x) ** 2 + (py - y) ** 2 < r2) out[py * W + px] = 1;
-      }
-    }
-    if (cone) applyCone(out, x, y, radius, cone);
-    return out;
-  }
-  if (o.tileMode) {
-    // 記事の「タイル単位の可視判定をピクセルに拡大すると壁を突き抜けて四角くなる」比較用
-    shadowcast(tileWalls, TW, TH, Math.floor(x / TILE), Math.floor(y / TILE), Math.round(radius / TILE), tileSeen);
-    for (let py = 0; py < H; py++) {
-      const trow = (py / TILE | 0) * TW, row = py * W;
-      for (let px = 0; px < W; px++) out[row + px] = tileSeen[trow + (px / TILE | 0)];
-    }
-  } else {
-    shadowcast(walls, W, H, x, y, radius, out);
-  }
-  // 扇形はシャドウキャストの結果を角度で絞るだけ。壁の照らし込みはその後にかけて、扇の内側の壁だけ照らす
-  if (cone) applyCone(out, x, y, radius, cone);
-  if (o.dilate) lightWallDepth(out, walls, W, H, 5);
-  return out;
-}
-
-function applyCone(seen, x, y, radius, cone) {
-  for (let py = Math.max(0, y - radius); py <= Math.min(H - 1, y + radius); py++) {
-    for (let px = Math.max(0, x - radius); px <= Math.min(W - 1, x + radius); px++) {
-      const i = py * W + px, dx = px - x, dy = py - y;
-      if (!seen[i] || dx * dx + dy * dy <= CONE_CORE * CONE_CORE) continue;
-      if (angleDiff(Math.atan2(dy, dx), cone.angle) > cone.half) seen[i] = 0;
-    }
-  }
-}
-
-// 再計算したら所要時間（ms）を、キャッシュが効いたら -1 を返す
-function updateLight(L, o) {
-  const x = Math.round(L.x), y = Math.round(L.y);
-  const cone = L.cone;                            // null なら radial
-  const coneKey = cone ? `${Math.round(cone.angle * 180 / Math.PI)},${cone.half.toFixed(3)}` : 'radial';
-  const key = `${x},${y},${L.radius},${o.banding},${o.dilate},${o.tileMode},${o.noShadow},${coneKey}`;
-  if (key === L.key) return -1;                   // 記事の推奨: 光が別セルに移ったときだけ再計算
-  L.key = key;
-  const t0 = performance.now();
-  castFrom(x, y, L.radius, L.seen, o, cone);
-  L.band.fill(0);
-  const R = L.radius, x0 = Math.max(0, x - R - 6), x1 = Math.min(W - 1, x + R + 6);
-  const y0 = Math.max(0, y - R - 6), y1 = Math.min(H - 1, y + R + 6);
-  L.box = [x0, y0, x1, y1];
-  for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
-    const i = py * W + px;
-    if (!L.seen[i]) continue;
-    const dist = Math.hypot(px - x, py - y);
-    let t = Math.min(1, Math.max(0, 1 - dist / R)) ** 0.8;
-    if (cone && dist > CONE_CORE) {                // 扇の縁に向かって暗くする
-      t *= Math.min(1, Math.max(0, (cone.half - angleDiff(Math.atan2(py - y, px - x), cone.angle)) / CONE_SOFT));
-    }
-    if (o.banding) t = Math.ceil(t * 6) / 6;        // 6 段階のフラットな帯
-    L.band[i] = t;
-  }
-  return performance.now() - t0;
-}
-
 // ---------- ゲーム状態 ----------
 const player = { x: 3 * TILE + 8, y: 2 * TILE + 8, facing: 1, moving: false, walkT: 0, aim: 0 };
-const torch = makeLight(player.x, player.y, 92, TORCH, 0);
-const wallTorches = sconces.map((s, k) => makeLight(s.lightX, s.lightY, 60, SCONCE, 1 + k * 2.3));
+const torch = makeLight(world, player.x, player.y, 92, TORCH, 0);
+const wallTorches = sconces.map((s, k) => makeLight(world, s.lightX, s.lightY, 60, SCONCE, 1 + k * 2.3));
 const braziers = [];
 const explored = new Uint8Array(N);
 window.demo = { player, explored, sconces };              // デバッグ用（コンソールから位置を動かせる）
@@ -175,7 +59,7 @@ canvas.addEventListener('click', (e) => {
   const x = Math.round((e.clientX - r.left) * W / r.width), y = Math.round((e.clientY - r.top) * H / r.height);
   const hit = braziers.findIndex((b) => Math.hypot(b.x - x, b.y - y) < 8);
   if (hit >= 0) braziers.splice(hit, 1);
-  else if (!walls[y * W + x] && braziers.length < 8) braziers.push(makeLight(x, y, 64, MAGIC, Math.random() * 10));
+  else if (!walls[y * W + x] && braziers.length < 8) braziers.push(makeLight(world, x, y, 64, MAGIC, Math.random() * 10));
 });
 $('radius').addEventListener('input', (e) => { torch.radius = +e.target.value; $('radiusVal').textContent = e.target.value; });
 $('coneAngle').addEventListener('input', (e) => { $('coneAngleVal').textContent = `${e.target.value}°`; });
@@ -188,7 +72,7 @@ $('clearLights').addEventListener('click', () => (braziers.length = 0));
 const frame = new Uint8ClampedArray(N * 4);
 const out = ctx.createImageData(W, H);
 const sightMask = new Uint8Array(N);
-const accR = new Float32Array(N), accG = new Float32Array(N), accB = new Float32Array(N);
+const acc = [new Float32Array(N), new Float32Array(N), new Float32Array(N)];
 const emissive = [];
 let prev = performance.now(), fps = 60, enemyMs = 0, composeMs = 0, lastCastMs = 0;
 
@@ -219,10 +103,10 @@ function tick(now) {
   // 光とフォグ
   torch.x = player.x; torch.y = player.y;
   torch.cone = $('shape').value === 'cone' ? { angle: player.aim, half: (+$('coneAngle').value / 2) * Math.PI / 180 } : null;
-  const ms = updateLight(torch, o);
+  const ms = updateLight(world, torch, o);
   if (ms >= 0) { lastCastMs = ms; for (let i = 0; i < N; i++) explored[i] |= torch.seen[i]; }
-  for (const L of wallTorches) updateLight(L, o);
-  for (const b of braziers) updateLight(b, o);
+  for (const L of wallTorches) updateLight(world, L, o);
+  for (const b of braziers) updateLight(world, b, o);
   const vis = torch.seen;                          // プレイヤーの視界 = 松明の届く範囲
 
   // 敵: 巡回し、自分の位置からキャストした視界でプレイヤーを探す
@@ -278,35 +162,14 @@ function tick(now) {
     }
   }
 
-  // 光の合計: ambient + Σ light × color × flicker（各光源は届く範囲の矩形だけ足す）
+  // 光の合計を作って合成する（lighting.js）
   const tc = performance.now();
-  accR.fill(AMBIENT[0]); accG.fill(AMBIENT[1]); accB.fill(AMBIENT[2]);
-  for (const L of [torch, ...wallTorches, ...braziers]) {
-    const f = $('flicker').checked
-      ? 1 + 0.06 * Math.sin(t * 11 + L.phase) + 0.04 * Math.sin(t * 23.3 + L.phase * 2) + 0.03 * Math.sin(t * 37.1 + L.phase)
-      : 1;
-    const cr = L.color[0] * f, cg = L.color[1] * f, cb = L.color[2] * f, band = L.band;
-    const [x0, y0, x1, y1] = L.box;
-    for (let py = y0; py <= y1; py++) for (let i = py * W + x0, end = py * W + x1; i <= end; i++) {
-      const v = band[i];
-      if (v) { accR[i] += v * cr; accG[i] += v * cg; accB[i] += v * cb; }
-    }
-  }
-
-  // 合成: lit = scene × 光の合計
-  const d = out.data, fog = $('fog').checked;
-  for (let i = 0, p = 0; i < N; i++, p += 4) {
-    if (vis[i]) {
-      d[p] = frame[p] * accR[i]; d[p + 1] = frame[p + 1] * accG[i]; d[p + 2] = frame[p + 2] * accB[i];
-      if (showSight && sightMask[i]) { d[p] += 60; d[p + 1] *= 0.7; d[p + 2] *= 0.7; }
-    } else if (fog && explored[i]) {
-      const m = (bg[p] + bg[p + 1] + bg[p + 2]) / 3;   // 探索済み・視界外は灰青のモノクロ
-      d[p] = m * FOG_TINT[0]; d[p + 1] = m * FOG_TINT[1]; d[p + 2] = m * FOG_TINT[2];
-    } else {
-      d[p] = d[p + 1] = d[p + 2] = 0;
-    }
-    d[p + 3] = 255;
-  }
+  const flickerOn = $('flicker').checked;
+  accumulateLights(world, [torch, ...wallTorches, ...braziers], acc, (L) => (flickerOn
+    ? 1 + 0.06 * Math.sin(t * 11 + L.phase) + 0.04 * Math.sin(t * 23.3 + L.phase * 2) + 0.03 * Math.sin(t * 37.1 + L.phase)
+    : 1));
+  const d = out.data;
+  composite(world, { frame, vis, explored, acc, fog: $('fog').checked, sightMask: showSight ? sightMask : null, out: d });
 
   // 発光するもの（結晶・「!」・炎・火の粉）は、ライティングの後に明るさそのままで描く
   for (let k = 0; k < emissive.length; k += 4) {
