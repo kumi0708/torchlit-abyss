@@ -13,6 +13,8 @@
   h1 { font-size: 16px; margin: 0 0 12px; color: #f0d9b5; }
   label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
   input[type=range] { flex: 1; }
+  select { background: #1c2030; color: inherit; border: 1px solid #333a50; border-radius: 4px; padding: 2px 4px; }
+  label.disabled { opacity: 0.4; }
   button { background: #1c2030; color: inherit; border: 1px solid #333a50; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
   button:hover { background: #262b40; }
   .hint { color: #8a90a6; font-size: 12px; margin-top: 14px; }
@@ -25,6 +27,14 @@
   <aside>
     <h1>シャドウキャスティング</h1>
     <label>光の半径 <input id="radius" type="range" min="24" max="160" value="92"> <span id="radiusVal">92</span></label>
+    <label>松明の形
+      <select id="shape">
+        <option value="radial">radial（全方向）</option>
+        <option value="cone">扇形（懐中電灯）</option>
+      </select>
+    </label>
+    <label>扇の角度 <input id="coneAngle" type="range" min="30" max="150" value="70"> <span id="coneAngleVal">70°</span></label>
+    <label><input id="noShadow" type="checkbox"> 影なし（壁を無視した radial）</label>
     <label><input id="banding" type="checkbox" checked> 6段階に量子化（バンディング）</label>
     <label><input id="dilate" type="checkbox" checked> 壁の上面を照らす（5px 膨張）</label>
     <label><input id="fog" type="checkbox" checked> フォグ・オブ・ウォー</label>

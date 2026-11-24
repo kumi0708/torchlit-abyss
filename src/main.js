@@ -47,14 +47,33 @@ const MAGIC = [0.45, 0.75, 1.1];
 const FOG_TINT = [0.30, 0.32, 0.40];
 
 const $ = (id) => document.getElementById(id);
-const opt = () => ({ banding: $('banding').checked, dilate: $('dilate').checked, tileMode: $('tileMode').checked });
+const opt = () => ({
+  banding: $('banding').checked, dilate: $('dilate').checked, tileMode: $('tileMode').checked, noShadow: $('noShadow').checked,
+});
+
+// 扇形ライト: 中心から CONE_CORE px 以内は全方向を照らす（自分の足元が見えるように）。
+// 扇の縁は CONE_SOFT ラジアンかけてなめらかに暗くする。
+const CONE_CORE = 12, CONE_SOFT = 0.18;
+const angleDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 
 function makeLight(x, y, radius, color, phase) {
   return { x, y, radius, color, phase, key: '', seen: new Uint8Array(N), band: new Float32Array(N), box: [0, 0, -1, -1] };
 }
 
 const tileSeen = new Uint8Array(TW * TH);
-function castFrom(x, y, radius, out, o) {
+function castFrom(x, y, radius, out, o, cone) {
+  if (o.noShadow) {
+    // 比較用: 壁を無視して半径内をすべて照らす、ただの radial light
+    out.fill(0);
+    const r2 = radius * radius;
+    for (let py = Math.max(0, y - radius); py <= Math.min(H - 1, y + radius); py++) {
+      for (let px = Math.max(0, x - radius); px <= Math.min(W - 1, x + radius); px++) {
+        if ((px - x) ** 2 + (py - y) ** 2 < r2) out[py * W + px] = 1;
+      }
+    }
+    if (cone) applyCone(out, x, y, radius, cone);
+    return out;
+  }
   if (o.tileMode) {
     // 記事の「タイル単位の可視判定をピクセルに拡大すると壁を突き抜けて四角くなる」比較用
     shadowcast(tileWalls, TW, TH, Math.floor(x / TILE), Math.floor(y / TILE), Math.round(radius / TILE), tileSeen);
@@ -65,18 +84,32 @@ function castFrom(x, y, radius, out, o) {
   } else {
     shadowcast(walls, W, H, x, y, radius, out);
   }
+  // 扇形はシャドウキャストの結果を角度で絞るだけ。壁の照らし込みはその後にかけて、扇の内側の壁だけ照らす
+  if (cone) applyCone(out, x, y, radius, cone);
   if (o.dilate) lightWallDepth(out, walls, W, H, 5);
   return out;
+}
+
+function applyCone(seen, x, y, radius, cone) {
+  for (let py = Math.max(0, y - radius); py <= Math.min(H - 1, y + radius); py++) {
+    for (let px = Math.max(0, x - radius); px <= Math.min(W - 1, x + radius); px++) {
+      const i = py * W + px, dx = px - x, dy = py - y;
+      if (!seen[i] || dx * dx + dy * dy <= CONE_CORE * CONE_CORE) continue;
+      if (angleDiff(Math.atan2(dy, dx), cone.angle) > cone.half) seen[i] = 0;
+    }
+  }
 }
 
 // 再計算したら所要時間（ms）を、キャッシュが効いたら -1 を返す
 function updateLight(L, o) {
   const x = Math.round(L.x), y = Math.round(L.y);
-  const key = `${x},${y},${L.radius},${o.banding},${o.dilate},${o.tileMode}`;
+  const cone = L.cone;                            // null なら radial
+  const coneKey = cone ? `${Math.round(cone.angle * 180 / Math.PI)},${cone.half.toFixed(3)}` : 'radial';
+  const key = `${x},${y},${L.radius},${o.banding},${o.dilate},${o.tileMode},${o.noShadow},${coneKey}`;
   if (key === L.key) return -1;                   // 記事の推奨: 光が別セルに移ったときだけ再計算
   L.key = key;
   const t0 = performance.now();
-  castFrom(x, y, L.radius, L.seen, o);
+  castFrom(x, y, L.radius, L.seen, o, cone);
   L.band.fill(0);
   const R = L.radius, x0 = Math.max(0, x - R - 6), x1 = Math.min(W - 1, x + R + 6);
   const y0 = Math.max(0, y - R - 6), y1 = Math.min(H - 1, y + R + 6);
@@ -84,7 +117,11 @@ function updateLight(L, o) {
   for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
     const i = py * W + px;
     if (!L.seen[i]) continue;
-    let t = Math.min(1, Math.max(0, 1 - Math.hypot(px - x, py - y) / R)) ** 0.8;
+    const dist = Math.hypot(px - x, py - y);
+    let t = Math.min(1, Math.max(0, 1 - dist / R)) ** 0.8;
+    if (cone && dist > CONE_CORE) {                // 扇の縁に向かって暗くする
+      t *= Math.min(1, Math.max(0, (cone.half - angleDiff(Math.atan2(py - y, px - x), cone.angle)) / CONE_SOFT));
+    }
     if (o.banding) t = Math.ceil(t * 6) / 6;        // 6 段階のフラットな帯
     L.band[i] = t;
   }
@@ -92,7 +129,7 @@ function updateLight(L, o) {
 }
 
 // ---------- ゲーム状態 ----------
-const player = { x: 3 * TILE + 8, y: 2 * TILE + 8, facing: 1, moving: false, walkT: 0 };
+const player = { x: 3 * TILE + 8, y: 2 * TILE + 8, facing: 1, moving: false, walkT: 0, aim: 0 };
 const torch = makeLight(player.x, player.y, 92, TORCH, 0);
 const wallTorches = sconces.map((s, k) => makeLight(s.lightX, s.lightY, 60, SCONCE, 1 + k * 2.3));
 const braziers = [];
@@ -141,6 +178,9 @@ canvas.addEventListener('click', (e) => {
   else if (!walls[y * W + x] && braziers.length < 8) braziers.push(makeLight(x, y, 64, MAGIC, Math.random() * 10));
 });
 $('radius').addEventListener('input', (e) => { torch.radius = +e.target.value; $('radiusVal').textContent = e.target.value; });
+$('coneAngle').addEventListener('input', (e) => { $('coneAngleVal').textContent = `${e.target.value}°`; });
+const syncShapeUi = () => $('coneAngle').closest('label').classList.toggle('disabled', $('shape').value !== 'cone');
+$('shape').addEventListener('change', syncShapeUi); syncShapeUi();
 $('resetFog').addEventListener('click', () => explored.fill(0));
 $('clearLights').addEventListener('click', () => (braziers.length = 0));
 
@@ -171,9 +211,14 @@ function tick(now) {
   player.moving = player.x !== ox || player.y !== oy;
   if (mx) player.facing = Math.sign(mx);
   player.walkT = player.moving ? player.walkT + dt : 0;
+  if (mx || my) {                                  // 懐中電灯は入力方向へなめらかに回す
+    const target = Math.atan2(my, mx);
+    player.aim += Math.atan2(Math.sin(target - player.aim), Math.cos(target - player.aim)) * Math.min(1, dt * 12);
+  }
 
   // 光とフォグ
   torch.x = player.x; torch.y = player.y;
+  torch.cone = $('shape').value === 'cone' ? { angle: player.aim, half: (+$('coneAngle').value / 2) * Math.PI / 180 } : null;
   const ms = updateLight(torch, o);
   if (ms >= 0) { lastCastMs = ms; for (let i = 0; i < N; i++) explored[i] |= torch.seen[i]; }
   for (const L of wallTorches) updateLight(L, o);
